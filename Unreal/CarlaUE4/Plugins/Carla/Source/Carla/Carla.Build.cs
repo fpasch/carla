@@ -8,6 +8,8 @@ public class Carla : ModuleRules
 {
   public Carla(ReadOnlyTargetRules Target) : base(Target)
   {
+    PrivatePCHHeaderFile = "Carla.h";
+
     PublicIncludePaths.AddRange(
       new string[] {
         // ... add public include paths required here ...
