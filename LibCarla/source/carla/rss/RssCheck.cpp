@@ -306,14 +306,6 @@ bool RssCheck::CheckObjects(carla::client::Timestamp const &timestamp,
     auto t_end = std::chrono::high_resolution_clock::now();
     std::cout << "-> SC " << std::chrono::duration<double, std::milli>(t_end - t_start).count() << " start checkObjects"
               << std::endl;
-#endif
-
-    const auto carla_ego_vehicle = boost::dynamic_pointer_cast<carla::client::Vehicle>(carla_ego_actor);
-    if (carla_ego_vehicle == nullptr) {
-      _logger->error("RSS Sensor only support vehicles as ego.");
-    }
-
-#if DEBUG_TIMING
     t_end = std::chrono::high_resolution_clock::now();
     std::cout << "-> ME " << std::chrono::duration<double, std::milli>(t_end - t_start).count()
               << " before  MapMatching" << std::endl;
@@ -336,6 +328,7 @@ bool RssCheck::CheckObjects(carla::client::Timestamp const &timestamp,
     }
 
     _carla_rss_state.ego_match_object = ego_match_object;
+    _carla_rss_state.ego_object_type = GetObjectType(carla_ego_actor, true);
 
     _logger->debug("MapMatch:: {}", _carla_rss_state.ego_match_object);
 
@@ -354,13 +347,13 @@ bool RssCheck::CheckObjects(carla::client::Timestamp const &timestamp,
 #endif
 
     _carla_rss_state.ego_dynamics_on_route = CalculateEgoDynamicsOnRoute(
-        timestamp, time_since_epoch_check_start_ms, *carla_ego_vehicle, _carla_rss_state.ego_match_object,
+        timestamp, time_since_epoch_check_start_ms, carla_ego_actor, _carla_rss_state.ego_match_object,
         _carla_rss_state.ego_route, _carla_rss_state.default_ego_vehicle_dynamics,
         _carla_rss_state.ego_dynamics_on_route);
 
     UpdateDefaultRssDynamics(_carla_rss_state);
 
-    CreateWorldModel(timestamp, *actors, *carla_ego_vehicle, _carla_rss_state);
+    CreateWorldModel(timestamp, *actors, carla_ego_actor, _carla_rss_state);
 
 #if DEBUG_TIMING
     t_end = std::chrono::high_resolution_clock::now();
@@ -593,17 +586,26 @@ void RssCheck::UpdateRoute(CarlaRssState &carla_rss_state) {
 
 EgoDynamicsOnRoute RssCheck::CalculateEgoDynamicsOnRoute(
     carla::client::Timestamp const &current_timestamp, double const &time_since_epoch_check_start_ms,
-    carla::client::Vehicle const &carla_vehicle, ::ad::map::match::Object match_object,
+    SharedPtr<carla::client::Actor> const carla_ego_actor, ::ad::map::match::Object match_object,
     ::ad::map::route::FullRoute const &route, ::ad::rss::world::RssDynamics const &default_ego_vehicle_dynamics,
     EgoDynamicsOnRoute const &last_dynamics) const {
   EgoDynamicsOnRoute new_dynamics;
   new_dynamics.timestamp = current_timestamp;
   new_dynamics.time_since_epoch_check_start_ms = time_since_epoch_check_start_ms;
-  new_dynamics.ego_speed = GetSpeed(carla_vehicle);
+  new_dynamics.ego_speed = GetSpeed(*carla_ego_actor);
   new_dynamics.ego_center = match_object.enuPosition.centerPoint;
   new_dynamics.ego_heading = match_object.enuPosition.heading;
-  new_dynamics.ego_heading_change = GetHeadingChange(carla_vehicle);
-  new_dynamics.ego_steering_angle = GetSteeringAngle(carla_vehicle);
+  new_dynamics.ego_heading_change = GetHeadingChange(*carla_ego_actor);
+
+  auto vehicle = boost::dynamic_pointer_cast<carla::client::Vehicle>(carla_ego_actor);
+  if (vehicle != nullptr) {
+    new_dynamics.ego_steering_angle = GetSteeringAngle(*vehicle);
+  }
+  else
+  {
+    //walker
+    new_dynamics.ego_steering_angle = ad::physics::Angle(0.);
+  }
 
   auto object_route =
       ::ad::map::route::getRouteSection(match_object, route, ::ad::map::route::RouteSectionCreationMode::AllRouteLanes);
@@ -694,7 +696,7 @@ EgoDynamicsOnRoute RssCheck::CalculateEgoDynamicsOnRoute(
 
   ::ad::rss::map::RssObjectData ego_object_data;
   ego_object_data.id = ::ad::rss::world::ObjectId(0u);
-  ego_object_data.type = ::ad::rss::world::ObjectType::EgoVehicle;
+  ego_object_data.type = GetObjectType(carla_ego_actor, true);
   ego_object_data.matchObject = match_object;
   ego_object_data.speed = new_dynamics.ego_speed;
   ego_object_data.yawRate = new_dynamics.ego_heading_change;
@@ -805,12 +807,12 @@ void RssCheck::UpdateDefaultRssDynamics(CarlaRssState &carla_rss_state) {
 
 RssCheck::RssObjectChecker::RssObjectChecker(RssCheck const &rss_check,
                                              ::ad::rss::map::RssSceneCreation &scene_creation,
-                                             carla::client::Vehicle const &carla_ego_vehicle,
+                                             SharedPtr<carla::client::Actor> const carla_ego_actor,
                                              CarlaRssState const &carla_rss_state,
                                              ::ad::map::landmark::LandmarkIdSet const &green_traffic_lights)
   : _rss_check(rss_check),
     _scene_creation(scene_creation),
-    _carla_ego_vehicle(carla_ego_vehicle),
+    _carla_ego_actor(carla_ego_actor),
     _carla_rss_state(carla_rss_state),
     _green_traffic_lights(green_traffic_lights) {}
 
@@ -832,8 +834,8 @@ void RssCheck::RssObjectChecker::operator()(
     auto other_steering_angle = ::ad::physics::Angle(0.);
 
     ::ad::rss::map::RssObjectData ego_object_data;
-    ego_object_data.id = _carla_ego_vehicle.GetId();
-    ego_object_data.type = ::ad::rss::world::ObjectType::EgoVehicle;
+    ego_object_data.id = _carla_ego_actor->GetId();
+    ego_object_data.type = _carla_rss_state.ego_object_type;
     ego_object_data.matchObject = _carla_rss_state.ego_match_object;
     ego_object_data.speed = _carla_rss_state.ego_dynamics_on_route.ego_speed;
     ego_object_data.yawRate = _carla_rss_state.ego_dynamics_on_route.ego_heading_change;
@@ -860,7 +862,7 @@ void RssCheck::RssObjectChecker::operator()(
 }
 
 void RssCheck::CreateWorldModel(carla::client::Timestamp const &timestamp, carla::client::ActorList const &actors,
-                                carla::client::Vehicle const &carla_ego_vehicle, CarlaRssState &carla_rss_state) const {
+                                SharedPtr<carla::client::Actor> const carla_ego_actor, CarlaRssState &carla_rss_state) const {
   // only loop once over the actors since always the respective objects are created
   std::vector<SharedPtr<carla::client::TrafficLight>> traffic_lights;
   std::vector<SharedPtr<carla::client::Actor>> other_traffic_participants;
@@ -873,12 +875,12 @@ void RssCheck::CreateWorldModel(carla::client::Timestamp const &timestamp, carla
 
     if ((boost::dynamic_pointer_cast<carla::client::Vehicle>(actor) != nullptr) ||
         (boost::dynamic_pointer_cast<carla::client::Walker>(actor) != nullptr)) {
-      if (actor->GetId() == carla_ego_vehicle.GetId()) {
+      if (actor->GetId() == carla_ego_actor->GetId()) {
         continue;
       }
       auto const relevant_distance =
           std::max(static_cast<double>(carla_rss_state.ego_dynamics_on_route.min_stopping_distance), 100.);
-      if (actor->GetTransform().location.Distance(carla_ego_vehicle.GetTransform().location) < relevant_distance) {
+      if (actor->GetTransform().location.Distance(carla_ego_actor->GetTransform().location) < relevant_distance) {
         other_traffic_participants.push_back(actor);
       }
     }
@@ -892,10 +894,10 @@ void RssCheck::CreateWorldModel(carla::client::Timestamp const &timestamp, carla
 #ifdef RSS_USE_TBB
   tbb::parallel_for_each(
       other_traffic_participants.begin(), other_traffic_participants.end(),
-      RssObjectChecker(*this, scene_creation, carla_ego_vehicle, carla_rss_state, green_traffic_lights));
+      RssObjectChecker(*this, scene_creation, carla_ego_actor, carla_rss_state, green_traffic_lights));
 #else
   for (auto const traffic_participant : other_traffic_participants) {
-    auto checker = RssObjectChecker(*this, scene_creation, carla_ego_vehicle, carla_rss_state, green_traffic_lights);
+    auto checker = RssObjectChecker(*this, scene_creation, carla_ego_actor, carla_rss_state, green_traffic_lights);
     checker(traffic_participant);
   }
 #endif
@@ -907,8 +909,8 @@ void RssCheck::CreateWorldModel(carla::client::Timestamp const &timestamp, carla
     ego_vehicle_dynamics.alphaLat.accelMax = ::ad::physics::Acceleration(0.);
 
     ::ad::rss::map::RssObjectData ego_object_data;
-    ego_object_data.id = carla_ego_vehicle.GetId();
-    ego_object_data.type = ::ad::rss::world::ObjectType::EgoVehicle;
+    ego_object_data.id = carla_ego_actor->GetId();
+    ego_object_data.type = GetObjectType(carla_ego_actor, true);
     ego_object_data.matchObject = _carla_rss_state.ego_match_object;
     ego_object_data.speed = _carla_rss_state.ego_dynamics_on_route.ego_speed;
     ego_object_data.yawRate = _carla_rss_state.ego_dynamics_on_route.ego_heading_change;
@@ -1008,5 +1010,21 @@ void RssCheck::AnalyseCheckResults(CarlaRssState &carla_rss_state) const {
   _logger->debug("RouteResponse: {}", carla_rss_state.proper_response);
 }
 
+::ad::rss::world::ObjectType RssCheck::GetObjectType(SharedPtr<carla::client::Actor> const actor, bool is_ego) const
+{
+  auto const vehicle = boost::dynamic_pointer_cast<carla::client::Vehicle>(actor);
+  if (vehicle != nullptr)
+  {
+    if (is_ego)
+    {
+      return ::ad::rss::world::ObjectType::EgoVehicle;
+    }
+    else
+    {
+      return ::ad::rss::world::ObjectType::OtherVehicle;
+    }
+  }
+  return ::ad::rss::world::ObjectType::Pedestrian;
+}
 }  // namespace rss
 }  // namespace carla

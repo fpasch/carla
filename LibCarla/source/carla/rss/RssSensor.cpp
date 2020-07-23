@@ -51,16 +51,13 @@ void RssSensor::Listen(CallbackFunctionType callback) {
     return;
   }
 
-  auto vehicle = boost::dynamic_pointer_cast<carla::client::Vehicle>(GetParent());
-  if (vehicle == nullptr) {
-    throw_exception(std::runtime_error(GetDisplayId() + ": parent is not a vehicle"));
-    return;
-  }
-
-  // get maximum steering angle
   float max_steer_angle_deg = 0.f;
-  for (auto const &wheel : vehicle->GetPhysicsControl().GetWheels()) {
-    max_steer_angle_deg = std::max(max_steer_angle_deg, wheel.max_steer_angle);
+  auto vehicle = boost::dynamic_pointer_cast<carla::client::Vehicle>(GetParent());
+  if (vehicle != nullptr) {
+    // get maximum steering angle
+    for (auto const &wheel : vehicle->GetPhysicsControl().GetWheels()) {
+      max_steer_angle_deg = std::max(max_steer_angle_deg, wheel.max_steer_angle);
+    }
   }
   auto max_steering_angle = max_steer_angle_deg * static_cast<float>(M_PI) / 180.0f;
 

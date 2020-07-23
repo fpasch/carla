@@ -241,6 +241,9 @@ private:
     /// @brief the actual RSS checker object
     ::ad::rss::core::RssCheck rss_check;
 
+    /// @brief the ego object type
+    ::ad::rss::world::ObjectType ego_object_type;
+
     /// @brief the ego map matched information
     ::ad::map::match::Object ego_match_object;
 
@@ -275,14 +278,14 @@ private:
   class RssObjectChecker {
   public:
     RssObjectChecker(RssCheck const &rss_check, ::ad::rss::map::RssSceneCreation &scene_creation,
-                     carla::client::Vehicle const &carla_ego_vehicle, CarlaRssState const &carla_rss_state,
+                     SharedPtr<carla::client::Actor> const carla_ego_actor, CarlaRssState const &carla_rss_state,
                      ::ad::map::landmark::LandmarkIdSet const &green_traffic_lights);
     void operator()(const carla::SharedPtr<carla::client::Actor> other_traffic_participant) const;
 
   private:
     RssCheck const &_rss_check;
     ::ad::rss::map::RssSceneCreation &_scene_creation;
-    carla::client::Vehicle const &_carla_ego_vehicle;
+    SharedPtr<carla::client::Actor> const _carla_ego_actor;
     CarlaRssState const &_carla_rss_state;
     ::ad::map::landmark::LandmarkIdSet const &_green_traffic_lights;
   };
@@ -305,13 +308,16 @@ private:
   /// @brief calculate the steering angle from the actor
   ::ad::physics::Angle GetSteeringAngle(carla::client::Vehicle const &actor) const;
 
+  /// @brief get the type of the object
+  ::ad::rss::world::ObjectType GetObjectType(SharedPtr<carla::client::Actor> const actor, bool is_ego = false) const;
+
   /// @brief update the desired ego vehicle route
   void UpdateRoute(CarlaRssState &carla_rss_state);
 
   /// @brief calculate ego vehicle dynamics on the route
   EgoDynamicsOnRoute CalculateEgoDynamicsOnRoute(carla::client::Timestamp const &current_timestamp,
                                                  double const &time_since_epoch_check_start_ms,
-                                                 carla::client::Vehicle const &carla_vehicle,
+                                                 SharedPtr<carla::client::Actor> const carla_ego_actor,
                                                  ::ad::map::match::Object match_object,
                                                  ::ad::map::route::FullRoute const &route,
                                                  ::ad::rss::world::RssDynamics const &default_ego_vehicle_dynamics,
@@ -326,7 +332,7 @@ private:
 
   /// @brief Create the RSS world model
   void CreateWorldModel(carla::client::Timestamp const &timestamp, carla::client::ActorList const &actors,
-                        carla::client::Vehicle const &carla_ego_vehicle, CarlaRssState &carla_rss_state) const;
+                        SharedPtr<carla::client::Actor> const carla_ego_actor, CarlaRssState &carla_rss_state) const;
 
   /// @brief Perform the actual RSS check
   bool PerformCheck(CarlaRssState &carla_rss_state) const;
